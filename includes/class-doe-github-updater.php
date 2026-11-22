@@ -7,10 +7,10 @@ if ( ! defined( 'ABSPATH' ) ) {
  * Plugin updates through the native WordPress mechanism, sourced from GitHub
  * releases of Gnoztis/disable-oembed-security.
  *
- * The source of truth is a release tagged v1.2.0 (or the highest vX.Y.Z tag
- * when no release exists): WordPress sees the new version, shows it under
- * Plugins and updates from the release package. No third-party libraries and
- * no write requests to the repository.
+ * The source of truth is a release tagged 1.3.0 or v1.3.0 (or the highest
+ * X.Y.Z / vX.Y.Z tag when no release exists): WordPress sees the new version,
+ * shows it under Plugins and updates from the release package. No third-party
+ * libraries and no write requests to the repository.
  */
 final class DOE_GitHub_Updater {
 
