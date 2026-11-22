@@ -7,10 +7,12 @@ if ( ! defined( 'ABSPATH' ) ) {
  * Plugin updates through the native WordPress mechanism, sourced from GitHub
  * releases of Gnoztis/disable-oembed-security.
  *
- * The source of truth is a release tagged 1.3.0 or v1.3.0 (or the highest
- * X.Y.Z / vX.Y.Z tag when no release exists): WordPress sees the new version,
- * shows it under Plugins and updates from the release package. No third-party
- * libraries and no write requests to the repository.
+ * The source of truth is the highest version found in the latest GitHub
+ * release and in the tag list, whichever is newer: a tag can be published
+ * without a matching release, and then the release alone would never offer an
+ * update. WordPress sees the new version, shows it under Plugins and updates
+ * from the package of the winning source. No third-party libraries and no
+ * write requests to the repository.
  */
 final class DOE_GitHub_Updater {
 
@@ -227,9 +229,9 @@ final class DOE_GitHub_Updater {
 	 * ============================================================ */
 
 	/**
-	 * Latest version data: the release first, otherwise the highest vX.Y.Z
-	 * tag. The tag fallback keeps updates working without a manually created
-	 * GitHub Release.
+	 * Latest version data: the highest version across the release and the tag
+	 * list. The whole answer is cached for six hours, a failed check is
+	 * retried after fifteen minutes.
 	 */
 	private function get_release(): ?array {
 		$cached = get_transient( DOE_Config::UPDATE_TRANSIENT );
@@ -241,7 +243,7 @@ final class DOE_GitHub_Updater {
 			return null;
 		}
 
-		$release = $this->fetch_release();
+		$release = $this->fetch_latest();
 
 		if ( $release === null ) {
 			set_transient( DOE_Config::UPDATE_ERROR_TRANSIENT, 1, DOE_Config::UPDATE_ERROR_TTL );
@@ -253,15 +255,34 @@ final class DOE_GitHub_Updater {
 		return $release;
 	}
 
-	private function fetch_release(): ?array {
+	/**
+	 * Picks the higher of the two sources.
+	 *
+	 * Both requests are always made: a repository can keep an older release
+	 * while a newer tag already exists, and "release first, otherwise tag"
+	 * would never offer that tag. On equal versions the release wins, because
+	 * it carries the release notes.
+	 *
+	 * @return array<string,mixed>|null
+	 */
+	private function fetch_latest(): ?array {
 		$release = $this->fetch_latest_release();
-		if ( $release !== null ) {
+		$tag     = $this->fetch_latest_tag();
+
+		if ( $release === null ) {
+			return $tag;
+		}
+		if ( $tag === null ) {
 			return $release;
 		}
 
-		return $this->fetch_latest_tag();
+		return version_compare( $tag['version'], $release['version'], '>' ) ? $tag : $release;
 	}
 
+	/**
+	 * Candidate from the latest GitHub release, with the package of that
+	 * release.
+	 */
 	private function fetch_latest_release(): ?array {
 		$body = $this->api_get( sprintf( 'https://api.github.com/repos/%s/releases/latest', DOE_Config::REPO ) );
 		if ( $body === null ) {
@@ -287,7 +308,7 @@ final class DOE_GitHub_Updater {
 	}
 
 	/**
-	 * Fallback without a GitHub Release: take the highest semver tag.
+	 * Candidate from the tag list: the highest semver tag and its zipball.
 	 */
 	private function fetch_latest_tag(): ?array {
 		$tags = $this->api_get( sprintf( 'https://api.github.com/repos/%s/tags?per_page=30', DOE_Config::REPO ) );
