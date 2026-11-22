@@ -24,7 +24,7 @@ final class DOE_GitHub_Updater {
 		add_filter( 'upgrader_source_selection', array( $this, 'rename_source' ), 10, 4 );
 		add_action( 'upgrader_process_complete', array( $this, 'after_upgrade' ), 10, 2 );
 		add_action( 'load-plugins.php', array( $this, 'maybe_force_check' ) );
-		add_filter( 'plugin_action_links_' . DOE_Config::BASENAME, array( $this, 'action_links' ) );
+		add_filter( 'plugin_action_links_' . DOE_Config::basename(), array( $this, 'action_links' ) );
 	}
 
 	/* ============================================================
@@ -33,7 +33,7 @@ final class DOE_GitHub_Updater {
 
 	/**
 	 * Adds our entry to the update_plugins transient when GitHub has a newer
-	 * release than the installed version.
+	 * version than the installed one.
 	 *
 	 * @param mixed $transient
 	 * @return mixed
@@ -46,15 +46,22 @@ final class DOE_GitHub_Updater {
 			$transient->response = array();
 		}
 
+		// Entries written by an older version of this code under a key that no
+		// longer matches the installed file: WordPress counts them in the
+		// badge but get_plugin_updates() never lists them.
+		$this->drop_stale_entries( $transient );
+
 		$release = $this->get_release();
 		if ( $release === null || version_compare( $release['version'], DOE_VERSION, '<=' ) ) {
 			return $transient;
 		}
 
-		$transient->response[ DOE_Config::BASENAME ] = (object) array(
-			'id'            => DOE_Config::BASENAME,
-			'slug'          => DOE_Config::SLUG,
-			'plugin'        => DOE_Config::BASENAME,
+		$basename = DOE_Config::basename();
+
+		$transient->response[ $basename ] = (object) array(
+			'id'            => $basename,
+			'slug'          => DOE_Config::dirname(),
+			'plugin'        => $basename,
 			'new_version'   => $release['version'],
 			'url'           => 'https://github.com/' . DOE_Config::REPO,
 			'package'       => $release['package'],
@@ -67,10 +74,43 @@ final class DOE_GitHub_Updater {
 		);
 
 		if ( isset( $transient->no_update ) && is_array( $transient->no_update ) ) {
-			unset( $transient->no_update[ DOE_Config::BASENAME ] );
+			unset( $transient->no_update[ $basename ] );
 		}
 
 		return $transient;
+	}
+
+	/**
+	 * Removes update entries that point at this plugin's main file while
+	 * sitting under a key other than the installed basename.
+	 *
+	 * WordPress builds the "update available" badge from
+	 * count( $transient->response ), but get_plugin_updates() only looks up
+	 * keys that match a file returned by get_plugins(). A stale key therefore
+	 * shows a badge together with an empty update list.
+	 *
+	 * @param object $transient
+	 */
+	private function drop_stale_entries( $transient ): void {
+		$basename = DOE_Config::basename();
+		$main     = basename( $basename );
+
+		foreach ( array( 'response', 'no_update' ) as $bucket ) {
+			if ( ! isset( $transient->$bucket ) || ! is_array( $transient->$bucket ) ) {
+				continue;
+			}
+
+			foreach ( $transient->$bucket as $key => $entry ) {
+				if ( $key === $basename ) {
+					continue;
+				}
+
+				$file = ( is_object( $entry ) && ! empty( $entry->plugin ) ) ? (string) $entry->plugin : (string) $key;
+				if ( basename( $file ) === $main ) {
+					unset( $transient->$bucket[ $key ] );
+				}
+			}
+		}
 	}
 
 	/**
@@ -85,7 +125,7 @@ final class DOE_GitHub_Updater {
 		if ( 'plugin_information' !== $action || ! is_object( $args ) || empty( $args->slug ) ) {
 			return $result;
 		}
-		if ( DOE_Config::SLUG !== (string) $args->slug ) {
+		if ( DOE_Config::dirname() !== (string) $args->slug ) {
 			return $result;
 		}
 
@@ -98,7 +138,7 @@ final class DOE_GitHub_Updater {
 
 		return (object) array(
 			'name'          => 'Disable oEmbed Endpoint (Security)',
-			'slug'          => DOE_Config::SLUG,
+			'slug'          => DOE_Config::dirname(),
 			'version'       => $release['version'],
 			'author'        => '<a href="https://github.com/Gnoztis">Gnostis</a>',
 			'homepage'      => 'https://github.com/' . DOE_Config::REPO,
@@ -116,8 +156,9 @@ final class DOE_GitHub_Updater {
 
 	/**
 	 * GitHub archives unpack into a directory like
-	 * Gnoztis-disable-oembed-security-1a2b3c4 — rename it to the plugin slug,
-	 * otherwise WordPress updates the wrong directory.
+	 * Gnoztis-disable-oembed-security-1a2b3c4 — rename it to the directory the
+	 * plugin is actually installed in, otherwise WordPress unpacks the update
+	 * next to the original and the site ends up with two copies.
 	 *
 	 * @param string $source
 	 * @param string $remote_source
@@ -129,14 +170,20 @@ final class DOE_GitHub_Updater {
 		if ( ! is_string( $source ) || ! is_string( $remote_source ) ) {
 			return $source;
 		}
-		if ( ! is_array( $hook_extra ) || empty( $hook_extra['plugin'] ) || DOE_Config::BASENAME !== $hook_extra['plugin'] ) {
-			return $source;
-		}
-		if ( ! is_dir( $source ) || ! is_file( trailingslashit( $source ) . 'disable-oembed-security.php' ) ) {
+		if ( ! is_array( $hook_extra ) || empty( $hook_extra['plugin'] ) || DOE_Config::basename() !== $hook_extra['plugin'] ) {
 			return $source;
 		}
 
-		$desired = trailingslashit( $remote_source ) . DOE_Config::SLUG;
+		$dir = DOE_Config::dirname();
+		if ( '' === $dir ) {
+			return $source;
+		}
+
+		if ( ! is_dir( $source ) || ! is_file( trailingslashit( $source ) . basename( DOE_Config::basename() ) ) ) {
+			return $source;
+		}
+
+		$desired = trailingslashit( $remote_source ) . $dir;
 		if ( untrailingslashit( $source ) === untrailingslashit( $desired ) ) {
 			return $source;
 		}
@@ -166,7 +213,7 @@ final class DOE_GitHub_Updater {
 	 */
 	public function after_upgrade( $upgrader = null, $hook_extra = array() ): void {
 		if ( is_array( $hook_extra ) && ! empty( $hook_extra['plugins'] ) && is_array( $hook_extra['plugins'] ) ) {
-			if ( ! in_array( DOE_Config::BASENAME, $hook_extra['plugins'], true ) ) {
+			if ( ! in_array( DOE_Config::basename(), $hook_extra['plugins'], true ) ) {
 				return;
 			}
 		}
@@ -379,7 +426,7 @@ final class DOE_GitHub_Updater {
 			'redirection' => 2,
 			'headers'     => array(
 				'Accept'       => 'application/vnd.github+json',
-				'User-Agent'   => 'disable-oembed-security/' . DOE_VERSION,
+				'User-Agent'   => DOE_Config::SLUG . '/' . DOE_VERSION,
 				'Content-Type' => 'application/json',
 			),
 		);
