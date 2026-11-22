@@ -51,8 +51,21 @@ final class DOE_GitHub_Updater {
 		// badge but get_plugin_updates() never lists them.
 		$this->drop_stale_entries( $transient );
 
+		$installed = $this->installed_version();
+
+		// Same request that installs an update: the files on disk are new, the
+		// entry built before the swap still offers the version just installed.
+		$this->drop_phantom_entry( $transient, $installed );
+
 		$release = $this->get_release();
-		if ( $release === null || version_compare( $release['version'], DOE_VERSION, '<=' ) ) {
+
+		// Both versions are needed. The constant is trustworthy between
+		// requests, the header is the only trustworthy source inside the
+		// request that replaces the files; injecting unless the release beats
+		// both guarantees no update is offered for a version already on disk.
+		if ( $release === null
+			|| ! version_compare( $release['version'], DOE_VERSION, '>' )
+			|| ! version_compare( $release['version'], $installed, '>' ) ) {
 			return $transient;
 		}
 
@@ -111,6 +124,57 @@ final class DOE_GitHub_Updater {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Version of the plugin that is actually on disk.
+	 *
+	 * DOE_VERSION is defined when the main file loads, so inside the request
+	 * that installs an update it still holds the previous version while the
+	 * file on disk already contains the new one. The header is the source of
+	 * truth; the constant is only a fallback for an unreadable file.
+	 *
+	 * Not cached on purpose: the value has to be re-read after the upgrader
+	 * replaces the files, and a per-request cache would keep the stale one.
+	 */
+	private function installed_version(): string {
+		$data = function_exists( 'get_file_data' )
+			? get_file_data( DOE_PLUGIN_FILE, array( 'Version' => 'Version' ), 'plugin' )
+			: array();
+
+		$version = isset( $data['Version'] ) ? trim( (string) $data['Version'] ) : '';
+
+		return '' === $version ? DOE_VERSION : $version;
+	}
+
+	/**
+	 * Drops our own response entry when it offers an already installed version.
+	 *
+	 * Core rewrites the update_plugins transient in the request that replaces
+	 * the files. An entry built there from the in-memory constant advertises
+	 * the version that has just been installed, so the site offers the same
+	 * update a second time; it stays for up to twelve hours.
+	 *
+	 * @param object $transient
+	 * @param string $installed Version from the plugin header on disk.
+	 */
+	private function drop_phantom_entry( $transient, string $installed ): void {
+		$basename = DOE_Config::basename();
+
+		if ( ! isset( $transient->response[ $basename ] ) || ! is_object( $transient->response[ $basename ] ) ) {
+			return;
+		}
+
+		$entry = $transient->response[ $basename ];
+		$new   = isset( $entry->new_version ) ? (string) $entry->new_version : '';
+
+		if ( '' === $new || ! version_compare( $new, $installed, '<=' ) ) {
+			return;
+		}
+
+		// Not moved to no_update: a response-shaped entry carries a package URL,
+		// and core builds no_update itself.
+		unset( $transient->response[ $basename ] );
 	}
 
 	/**
@@ -205,8 +269,12 @@ final class DOE_GitHub_Updater {
 	}
 
 	/**
-	 * Reset the cached check after an upgrade so the site does not keep
+	 * Resets the cached check after an upgrade so the site does not keep
 	 * advertising the version it has just installed.
+	 *
+	 * The release cache is part of what is reset: an answer cached before the
+	 * update can still carry the previous "tested"/"new version" pair, and the
+	 * next run has to read both from the repository again.
 	 *
 	 * @param mixed $upgrader
 	 * @param array $hook_extra
