@@ -409,10 +409,58 @@ final class DOE_GitHub_Updater {
 			'package'      => $package,
 			'body'         => $body,
 			'published_at' => $published_at,
-			'tested'       => $header['requires'],
+			'tested'       => $this->tested_version( $header['tested'] ),
 			'requires'     => $header['requires'],
 			'requires_php' => $header['requires_php'],
 		);
+	}
+
+	/**
+	 * "Tested up to" turned into the value WordPress compares with.
+	 *
+	 * The header holds a branch claim ("7.1"), while the update screen compares
+	 * the stored value with the full running version ("7.1.5"):
+	 * `version_compare( $update->tested, $cur_wp_version, '>=' )`. A branch
+	 * claim is always lower than a patch release, which is why a bare "7.1"
+	 * still renders "Compatibility with WordPress 7.1.5: Not tested".
+	 *
+	 * api.wordpress.org resolves this by serving the patch release of the
+	 * declared branch: readmes say "Tested up to: 7.1" and the API answers
+	 * "7.1.5". The same expansion is done here, so the claim covers the running
+	 * patch release of the branch the author declared.
+	 *
+	 * @param string $tested Header value, e.g. "7.1"; empty when absent.
+	 * @return string Empty when the header is absent, otherwise a version.
+	 */
+	private function tested_version( string $tested ): string {
+		$tested = trim( $tested );
+		if ( '' === $tested ) {
+			return '';
+		}
+
+		$running = function_exists( 'wp_get_wp_version' ) ? (string) wp_get_wp_version() : '';
+		if ( '' === $running && isset( $GLOBALS['wp_version'] ) ) {
+			$running = (string) $GLOBALS['wp_version'];
+		}
+		$running = trim( (string) preg_replace( '/-.*/', '', $running ) );
+		if ( '' === $running ) {
+			return $tested;
+		}
+
+		$tested_parts  = explode( '.', $tested );
+		$running_parts = explode( '.', $running );
+
+		// Already as specific as the running version, or more so.
+		if ( count( $tested_parts ) >= count( $running_parts ) ) {
+			return $tested;
+		}
+
+		// Same branch: the claim covers the running patch release as well.
+		if ( array_slice( $running_parts, 0, count( $tested_parts ) ) === $tested_parts ) {
+			return $running;
+		}
+
+		return $tested;
 	}
 
 	/**
@@ -521,9 +569,13 @@ final class DOE_GitHub_Updater {
 	}
 
 	/**
-	 * Requires / Requires PHP from the plugin header.
+	 * Tested up to / Requires at least / Requires PHP from the plugin header.
 	 *
-	 * @return array{requires:string,requires_php:string}
+	 * `tested` and `requires` are different headers and must not be mixed:
+	 * WordPress compares `tested` with the installed version to decide whether
+	 * the update row says "compatible" or "untested".
+	 *
+	 * @return array{tested:string,requires:string,requires_php:string}
 	 */
 	private function header_data(): array {
 		if ( self::$header === null ) {
@@ -531,6 +583,7 @@ final class DOE_GitHub_Updater {
 				? get_file_data(
 					DOE_PLUGIN_FILE,
 					array(
+						'Tested up to'      => 'Tested up to',
 						'Requires at least' => 'Requires at least',
 						'Requires PHP'      => 'Requires PHP',
 					),
@@ -539,6 +592,7 @@ final class DOE_GitHub_Updater {
 				: array();
 
 			self::$header = array(
+				'tested'       => isset( $data['Tested up to'] ) ? (string) $data['Tested up to'] : '',
 				'requires'     => isset( $data['Requires at least'] ) ? (string) $data['Requires at least'] : '',
 				'requires_php' => isset( $data['Requires PHP'] ) ? (string) $data['Requires PHP'] : '',
 			);
