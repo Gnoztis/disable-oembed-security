@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Disable oEmbed Endpoint (Security)
  * Description: Отключает REST API эндпоинт oEmbed и связанные функции для защиты от атак, использующих oEmbed в качестве прокси. Совместим с PHP 8.4+ и WordPress 7.0+.
- * Version:     1.3.8
+ * Version:     1.3.9
  * Author:      Gnostis
  * License:     GPL-2.0-or-later
  * Text Domain: disable-oembed-security
  * Requires at least: 7.0
  * Tested up to: 7.1
- * Requires PHP: 8.4
+ * Requires PHP: 8.0
  * Update URI:  https://github.com/Gnoztis/disable-oembed-security
  */
 
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'DOE_VERSION', '1.3.8' );
+define( 'DOE_VERSION', '1.3.9' );
 define( 'DOE_PLUGIN_FILE', __FILE__ );
 define( 'DOE_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 
